@@ -1,58 +1,62 @@
 {
-  "formTitle": "Get in Touch with Kapoore Art",
-  "formSubtitle": "Fill the form below and we'll get back to you shortly.",
   "admin": {
     "username": "admin",
     "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"
   },
+  "layout": {
+    "columns": 1
+  },
+  "formSubtitle": "Fill the form below and we'll get back to you shortly.",
   "fields": [
     {
+      "label": "Full Name",
       "id": "name",
       "order": 1,
-      "placeholder": "Enter your name",
-      "visible": true,
-      "colSpan": 1,
-      "type": "text",
       "required": true,
-      "label": "Full Name"
+      "placeholder": "Enter your name",
+      "colSpan": 1,
+      "visible": true,
+      "type": "text"
     },
     {
-      "required": true,
-      "label": "Mobile Number",
-      "colSpan": 1,
       "type": "mobile",
       "visible": true,
-      "placeholder": "10-digit mobile number",
-      "id": "mobile",
-      "order": 2
-    },
-    {
-      "visible": true,
-      "required": false,
-      "label": "Email Address",
       "colSpan": 1,
-      "type": "email",
-      "placeholder": "you@example.com",
-      "order": 3,
-      "id": "email"
+      "required": true,
+      "placeholder": "10-digit mobile number",
+      "order": 2,
+      "id": "mobile",
+      "label": "Mobile Number"
     },
     {
-      "order": 4,
+      "id": "email",
+      "label": "Email Address",
+      "visible": true,
+      "type": "email",
+      "order": 3,
+      "placeholder": "you@example.com",
+      "required": false,
+      "colSpan": 1
+    },
+    {
+      "label": "City",
       "id": "city",
       "placeholder": "Your city",
-      "visible": true,
-      "colSpan": 1,
-      "type": "text",
       "required": false,
-      "label": "City"
+      "order": 4,
+      "colSpan": 1,
+      "visible": true,
+      "type": "text"
     },
     {
-      "visible": true,
-      "type": "dropdown",
-      "required": false,
       "label": "Requirement",
       "id": "requirement",
+      "required": false,
+      "placeholder": "",
       "order": 5,
+      "type": "dropdown",
+      "visible": true,
+      "colSpan": 1,
       "options": [
         "Graphic Designing",
         "Vinyl Car Wrapping",
@@ -74,51 +78,47 @@
         "Menu Card Design",
         "Bill Book & Letterhead Design",
         "Digital Marketing Creatives."
-      ],
-      "colSpan": 1,
-      "placeholder": ""
+      ]
     },
     {
-      "type": "textarea",
-      "colSpan": 1,
-      "label": "Message",
+      "placeholder": "Tell us more about your requirement...",
       "required": false,
-      "visible": true,
       "order": 7,
-      "id": "message",
-      "placeholder": "Tell us more about your requirement..."
+      "colSpan": 1,
+      "visible": true,
+      "type": "textarea",
+      "label": "Message",
+      "id": "message"
     }
   ],
-  "layout": {
-    "columns": 1
+  "formTitle": "Get in Touch with Kapoore Art",
+  "theme": {
+    "logo": "https://i.ibb.co/bgWwFzxJ/Kapoore-Art-Logo.jpg",
+    "buttonStyle": "rounded",
+    "favicon": "https://i.ibb.co/1fmfTKHd/Kapoore-Art-Logo.png",
+    "bgColor": "#000000",
+    "borderRadius": 13,
+    "textColor": "#c20000",
+    "bgImage": "",
+    "spacing": 14,
+    "secondaryColor": "#000000",
+    "animations": true,
+    "fontFamily": "'Poppins', sans-serif",
+    "primaryColor": "#c20000"
   },
   "settings": {
-    "errorMessage": "Something went wrong. Please try again or call us directly.",
-    "notificationsEnabled": true,
+    "pushoverUserKey": "",
     "duplicateCheckEnabled": true,
-    "pushoverApiToken": "",
-    "fileUploadEnabled": false,
-    "sheetId": "13Qmm06PMbpoZSI3u6SSOrGBREthLh-21cmqB8aDDTqA",
-    "successMessage": "Thank you! Your enquiry has been received. We'll contact you soon.",
     "emailRecipients": [
       "admin@example.com"
     ],
-    "autoReplyEnabled": true,
+    "sheetId": "13Qmm06PMbpoZSI3u6SSOrGBREthLh-21cmqB8aDDTqA",
+    "errorMessage": "Something went wrong. Please try again or call us directly.",
+    "fileUploadEnabled": false,
+    "successMessage": "Thank you! Your enquiry has been received. We'll contact you soon.",
     "captchaEnabled": true,
-    "pushoverUserKey": ""
-  },
-  "theme": {
-    "logo": "https://i.ibb.co/bgWwFzxJ/Kapoore-Art-Logo.jpg",
-    "bgImage": "",
-    "favicon": "https://i.ibb.co/1fmfTKHd/Kapoore-Art-Logo.png",
-    "textColor": "#2b2b2b",
-    "buttonStyle": "rounded",
-    "bgColor": "#b30000",
-    "spacing": 14,
-    "secondaryColor": "#c9a26d",
-    "borderRadius": 13,
-    "primaryColor": "#6b4226",
-    "animations": true,
-    "fontFamily": "'Poppins', sans-serif"
+    "autoReplyEnabled": true,
+    "notificationsEnabled": true,
+    "pushoverApiToken": ""
   }
 }
