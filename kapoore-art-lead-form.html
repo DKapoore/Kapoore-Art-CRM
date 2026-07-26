@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Get in Touch with Kapoore Art</title>
+<link rel="icon" href="https://i.ibb.co/1fmfTKHd/Kapoore-Art-Logo.png">
+<style>
+  :root{
+    --primary: #6b4226;
+    --secondary: #c9a26d;
+    --text: #2b2b2b;
+    --bg: #b30000;
+    --radius: 13px;
+    --btn-radius: 13px;
+    --spacing: 14px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:'Poppins', sans-serif; background:var(--bg) ;
+    color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .ka-card{
+    width:100%; max-width:520px;
+    background:#fff; border-radius:calc(var(--radius) + 6px); box-shadow:0 10px 40px rgba(0,0,0,0.12);
+    padding:calc(var(--spacing) * 2); animation: kaFadeUp .5s ease;
+  }
+  @keyframes kaFadeUp{ from{opacity:0; transform:translateY(16px);} to{opacity:1; transform:translateY(0);} }
+  .ka-logo{ max-height:56px; margin-bottom:12px; }
+  .ka-title{ font-size:1.6rem; font-weight:700; color:var(--primary); margin:0 0 4px; }
+  .ka-subtitle{ font-size:0.95rem; color:#666; margin:0 0 20px; }
+  .ka-grid{ display:grid; grid-template-columns:repeat(1, 1fr); gap:var(--spacing); }
+  .ka-field{ display:flex; flex-direction:column; gap:6px; }
+  .ka-field.span2{ grid-column: span 2; }
+  .ka-field.span3{ grid-column: span 3; }
+  label{ font-size:0.85rem; font-weight:600; }
+  label .req{ color:#d33; }
+  input, select, textarea{
+    padding:11px 13px; border:1px solid #ddd; border-radius:var(--radius); font-size:0.95rem; font-family:inherit;
+    background:#fff; color:var(--text); transition:border-color .2s, box-shadow .2s; width:100%;
+  }
+  input:focus, select:focus, textarea:focus{ outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(0,0,0,0.05); }
+  textarea{ min-height:90px; resize:vertical; }
+  .ka-radio-group, .ka-checkbox-group{ display:flex; flex-wrap:wrap; gap:10px; }
+  .ka-radio-group label, .ka-checkbox-group label{ font-weight:400; display:flex; align-items:center; gap:6px; }
+  .ka-btn{
+    margin-top:calc(var(--spacing));
+    background:var(--primary); color:#fff; border:none; padding:13px 20px; font-size:1rem; font-weight:600;
+    border-radius:var(--btn-radius); cursor:pointer; width:100%; transition:transform .15s, background .2s;
+  }
+  .ka-btn:hover{ background:var(--secondary); transform:translateY(-2px); }
+  .ka-btn:disabled{ opacity:0.6; cursor:not-allowed; transform:none; }
+  .ka-msg{ margin-top:14px; padding:12px 14px; border-radius:var(--radius); font-size:0.9rem; display:none; }
+  .ka-msg.success{ background:#e6f6ea; color:#1c7c3f; display:block; }
+  .ka-msg.error{ background:#fdeaea; color:#c0392b; display:block; }
+  .ka-captcha{ display:flex; align-items:center; gap:10px; font-size:0.9rem; }
+  .ka-footer{ text-align:center; margin-top:16px; font-size:0.75rem; color:#999; }
+</style>
+</head>
+<body>
+  <div class="ka-card">
+    <img class="ka-logo" src="https://i.ibb.co/bgWwFzxJ/Kapoore-Art-Logo.jpg" alt="logo">
+    <h1 class="ka-title">Get in Touch with Kapoore Art</h1>
+    <p class="ka-subtitle">Fill the form below and we&#39;ll get back to you shortly.</p>
+    <form id="kaForm" novalidate>
+      <div class="ka-grid">
+        <div class="ka-field"><label>Full Name <span class="req">*</span></label><input type="text" id="f_name" placeholder="Enter your name" required></div>
+<div class="ka-field"><label>Mobile Number <span class="req">*</span></label><input type="tel" id="f_mobile" pattern="[0-9]{10}" maxlength="10" placeholder="10-digit mobile number" required></div>
+<div class="ka-field"><label>Email Address </label><input type="email" id="f_email" placeholder="you@example.com" ></div>
+<div class="ka-field"><label>City </label><input type="text" id="f_city" placeholder="Your city" ></div>
+<div class="ka-field"><label>Requirement </label><select id="f_requirement" ><option value="">Select...</option><option value="Graphic Designing">Graphic Designing</option><option value="Vinyl Car Wrapping">Vinyl Car Wrapping</option><option value="Website Designing">Website Designing</option><option value="Video Editing">Video Editing</option><option value="Logo Design">Logo Design</option><option value="Visiting Card Design &amp; Printing">Visiting Card Design &amp; Printing</option><option value="Sticker Design &amp; Printing">Sticker Design &amp; Printing</option><option value="Leaflet Design &amp; Printing">Leaflet Design &amp; Printing</option><option value="Pamphlet Design &amp; Printing">Pamphlet Design &amp; Printing</option><option value="Flex Banner Printing">Flex Banner Printing</option><option value="Sign Board Designing">Sign Board Designing</option><option value="Product Label Design">Product Label Design</option><option value="Packaging Design">Packaging Design</option><option value="Brochure Design">Brochure Design</option><option value="Social Media Post Design">Social Media Post Design</option><option value="Wedding Card Design">Wedding Card Design</option><option value="ID Card Design">ID Card Design</option><option value="Menu Card Design">Menu Card Design</option><option value="Bill Book &amp; Letterhead Design">Bill Book &amp; Letterhead Design</option><option value="Digital Marketing Creatives.">Digital Marketing Creatives.</option></select></div>
+<div class="ka-field"><label>Message </label><textarea id="f_message" placeholder="Tell us more about your requirement..." ></textarea></div>
+        
+        <div class="ka-field ka-captcha" id="captchaWrap"></div>
+      </div>
+      <button type="submit" class="ka-btn" id="submitBtn">Submit Enquiry</button>
+      <div class="ka-msg" id="kaMsg"></div>
+    </form>
+    <div class="ka-footer">Kapoore Art</div>
+  </div>
+
+  <script id="ka-config" type="application/json">{"formTitle":"Get in Touch with Kapoore Art","formSubtitle":"Fill the form below and we'll get back to you shortly.","admin":{"username":"admin","passwordHash":"240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"},"fields":[{"id":"name","order":1,"placeholder":"Enter your name","visible":true,"colSpan":1,"type":"text","required":true,"label":"Full Name"},{"required":true,"label":"Mobile Number","colSpan":1,"type":"mobile","visible":true,"placeholder":"10-digit mobile number","id":"mobile","order":2},{"visible":true,"required":false,"label":"Email Address","colSpan":1,"type":"email","placeholder":"you@example.com","order":3,"id":"email"},{"order":4,"id":"city","placeholder":"Your city","visible":true,"colSpan":1,"type":"text","required":false,"label":"City"},{"visible":true,"type":"dropdown","required":false,"label":"Requirement","id":"requirement","order":5,"options":["Graphic Designing","Vinyl Car Wrapping","Website Designing","Video Editing","Logo Design","Visiting Card Design & Printing","Sticker Design & Printing","Leaflet Design & Printing","Pamphlet Design & Printing","Flex Banner Printing","Sign Board Designing","Product Label Design","Packaging Design","Brochure Design","Social Media Post Design","Wedding Card Design","ID Card Design","Menu Card Design","Bill Book & Letterhead Design","Digital Marketing Creatives."],"colSpan":1,"placeholder":""},{"type":"textarea","colSpan":1,"label":"Message","required":false,"visible":true,"order":7,"id":"message","placeholder":"Tell us more about your requirement..."}],"layout":{"columns":1},"settings":{"errorMessage":"Something went wrong. Please try again or call us directly.","notificationsEnabled":true,"duplicateCheckEnabled":true,"pushoverApiToken":"","fileUploadEnabled":false,"sheetId":"13Qmm06PMbpoZSI3u6SSOrGBREthLh-21cmqB8aDDTqA","successMessage":"Thank you! Your enquiry has been received. We'll contact you soon.","emailRecipients":["admin@example.com"],"autoReplyEnabled":true,"captchaEnabled":true,"pushoverUserKey":""},"theme":{"logo":"https://i.ibb.co/bgWwFzxJ/Kapoore-Art-Logo.jpg","bgImage":"","favicon":"https://i.ibb.co/1fmfTKHd/Kapoore-Art-Logo.png","textColor":"#2b2b2b","buttonStyle":"rounded","bgColor":"#b30000","spacing":14,"secondaryColor":"#c9a26d","borderRadius":13,"primaryColor":"#6b4226","animations":true,"fontFamily":"'Poppins', sans-serif"}}</script>
+  <script>
+    var WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyiqT-lgiC3Xqx14-g7CtpX-9O0xk4e6u58X0UZedwAOW5_JLrWcP3Kiyx8KuAAmt9t0w/exec";
+    var CONFIG = JSON.parse(document.getElementById('ka-config').textContent);
+    var captchaAnswer = 0;
+
+    function setupCaptcha(){
+      var wrap = document.getElementById('captchaWrap');
+      if(!wrap) return;
+      var a = Math.floor(Math.random()*9)+1, b = Math.floor(Math.random()*9)+1;
+      captchaAnswer = a+b;
+      wrap.innerHTML = '<label style="min-width:auto;">What is '+a+' + '+b+'? <span class="req">*</span></label><input type="number" id="f_captcha" required style="max-width:100px;">';
+    }
+    setupCaptcha();
+
+    function showMsg(text, type){
+      var el = document.getElementById('kaMsg');
+      el.textContent = text;
+      el.className = 'ka-msg ' + type;
+    }
+
+    function readFileAsBase64(file){
+      return new Promise(function(resolve, reject){
+        var reader = new FileReader();
+        reader.onload = function(){ resolve(reader.result); };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    document.getElementById('kaForm').addEventListener('submit', function(e){
+      e.preventDefault();
+      var btn = document.getElementById('submitBtn');
+      var data = {};
+      CONFIG.fields.filter(function(f){return f.visible;}).forEach(function(f){
+        var el = document.getElementById('f_' + f.id);
+        if(!el) return;
+        if(f.type === 'checkbox'){
+          var boxes = document.querySelectorAll('input[name="f_'+f.id+'"]:checked');
+          data[f.id] = Array.prototype.map.call(boxes, function(b){return b.value;}).join(', ');
+        } else if(f.type === 'radio'){
+          var checked = document.querySelector('input[name="f_'+f.id+'"]:checked');
+          data[f.id] = checked ? checked.value : '';
+        } else {
+          data[f.id] = el.value;
+        }
+      });
+
+      if(CONFIG.settings.captchaEnabled){
+        var cVal = parseInt(document.getElementById('f_captcha').value, 10);
+        if(cVal !== captchaAnswer){
+          showMsg('Incorrect captcha answer. Please try again.', 'error');
+          setupCaptcha();
+          return;
+        }
+      }
+
+      btn.disabled = true; btn.textContent = 'Submitting...';
+
+      function doSubmit(fileData){
+        if(fileData) data.file = fileData;
+        fetch(WEB_APP_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'submitLead', data: data })
+        }).then(function(r){ return r.json(); }).then(function(res){
+          btn.disabled = false; btn.textContent = 'Submit Enquiry';
+          if(res.success){
+            showMsg(res.message || CONFIG.settings.successMessage, 'success');
+            document.getElementById('kaForm').reset();
+            setupCaptcha();
+          } else {
+            showMsg(res.message || CONFIG.settings.errorMessage, 'error');
+          }
+        }).catch(function(){
+          btn.disabled = false; btn.textContent = 'Submit Enquiry';
+          showMsg(CONFIG.settings.errorMessage, 'error');
+        });
+      }
+
+      var fileInput = document.getElementById('f_file');
+      if(CONFIG.settings.fileUploadEnabled && fileInput && fileInput.files[0]){
+        readFileAsBase64(fileInput.files[0]).then(function(b64){
+          doSubmit({ name: fileInput.files[0].name, mimeType: fileInput.files[0].type, base64: b64 });
+        });
+      } else {
+        doSubmit(null);
+      }
+    });
+  </script>
+</body>
+</html>
