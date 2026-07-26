@@ -1,908 +1,210 @@
-/**
- * =====================================================================
- *  KAPOORE ART — LEAD CRM (Database-free, Google Sheets + Apps Script)
- * =====================================================================
- *  Author: Dev (DKapoore)
- *  This file is the ONLY server-side file needed besides Admin.html.
- *  Deploy as Web App (Execute as: Me, Access: Anyone).
- * =====================================================================
- */
-
-// ---------------------------------------------------------------------
-// CONSTANTS
-// ---------------------------------------------------------------------
-const LEADS_SHEET_NAME = 'Leads';
-const VERSIONS_SHEET_NAME = 'Versions';
-const CONFIG_PROP_KEY = 'KA_CRM_CONFIG';
-const SESSION_PROP_PREFIX = 'KA_SESSION_';
-const SESSION_TTL_MS = 1000 * 60 * 60 * 6; // 6 hours
-const STATUS_OPTIONS = ['New', 'Contacted', 'Follow Up', 'Quotation Sent', 'Won', 'Lost'];
-const BASE_HEADERS = ['LeadID', 'Timestamp', 'Name', 'Mobile', 'Email', 'City', 'Requirement', 'Message', 'Status', 'Source', 'ExtraFieldsJSON'];
-
-// ---------------------------------------------------------------------
-// ENTRY POINTS
-// ---------------------------------------------------------------------
-function doGet(e) {
-  ensureSetup_();
-  const page = (e && e.parameter && e.parameter.page) || 'form';
-
-  if (page === 'admin') {
-    const tpl = HtmlService.createTemplateFromFile('Admin');
-    tpl.webAppUrl = ScriptApp.getService().getUrl();
-    return tpl.evaluate()
-      .setTitle('Kapoore Art — CRM Admin Panel')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  }
-
-  // Default: serve the live public lead form
-  const config = getConfig_();
-  const html = buildFormHTML_(config, ScriptApp.getService().getUrl());
-  return HtmlService.createHtmlOutput(html)
-    .setTitle(config.formTitle || 'Contact Us')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
-
-function doPost(e) {
-  ensureSetup_();
-  let payload = {};
-  try {
-    payload = JSON.parse(e.postData.contents);
-  } catch (err) {
-    return jsonOut_({ success: false, message: 'Invalid request payload.' });
-  }
-
-  const action = payload.action;
-  try {
-    switch (action) {
-      case 'submitLead':        return jsonOut_(handleSubmitLead_(payload));
-      case 'adminLogin':        return jsonOut_(handleAdminLogin_(payload));
-      case 'verifyPin':         return jsonOut_(handleVerifyPin_(payload));
-      case 'validateSession':   return jsonOut_({ success: isValidSession_(payload.token) });
-      case 'adminLogout':       return jsonOut_(handleAdminLogout_(payload));
-      case 'getPublicConfig':   return jsonOut_({ success: true, config: getPublicConfig_() });
-      case 'getConfig':         return jsonOut_(requireAuth_(payload, () => ({ success: true, config: getConfig_() })));
-      case 'saveConfig':        return jsonOut_(requireAuth_(payload, () => handleSaveConfig_(payload)));
-      case 'getLeads':          return jsonOut_(requireAuth_(payload, () => handleGetLeads_(payload)));
-      case 'updateLeadStatus':  return jsonOut_(requireAuth_(payload, () => handleUpdateLeadStatus_(payload)));
-      case 'deleteLead':        return jsonOut_(requireAuth_(payload, () => handleDeleteLead_(payload)));
-      case 'getDashboardStats': return jsonOut_(requireAuth_(payload, () => handleDashboardStats_()));
-      case 'exportHTML':        return jsonOut_(requireAuth_(payload, () => handleExportHTML_()));
-      case 'exportSettings':    return jsonOut_(requireAuth_(payload, () => ({ success: true, json: JSON.stringify(getConfig_(), null, 2) })));
-      case 'importSettings':    return jsonOut_(requireAuth_(payload, () => handleImportSettings_(payload)));
-      case 'importHTML':        return jsonOut_(requireAuth_(payload, () => handleImportSettings_(payload))); // client extracts JSON from HTML then reuses this
-      case 'restoreDefault':    return jsonOut_(requireAuth_(payload, () => handleRestoreDefault_()));
-      case 'getVersions':       return jsonOut_(requireAuth_(payload, () => handleGetVersions_()));
-      case 'restoreVersion':    return jsonOut_(requireAuth_(payload, () => handleRestoreVersion_(payload)));
-      case 'changeAdminPassword': return jsonOut_(requireAuth_(payload, () => handleChangePassword_(payload)));
-      case 'setPin':             return jsonOut_(requireAuth_(payload, () => handleSetPin_(payload)));
-      default:
-        return jsonOut_({ success: false, message: 'Unknown action.' });
-    }
-  } catch (err) {
-    return jsonOut_({ success: false, message: 'Server error: ' + err.message });
-  }
-}
-
-function include(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
-}
-
-function jsonOut_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}
-
-// ---------------------------------------------------------------------
-// SETUP / SHEETS
-// ---------------------------------------------------------------------
-function ensureSetup_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  let leadsSheet = ss.getSheetByName(LEADS_SHEET_NAME);
-  if (!leadsSheet) {
-    leadsSheet = ss.insertSheet(LEADS_SHEET_NAME);
-    leadsSheet.appendRow(BASE_HEADERS);
-    leadsSheet.setFrozenRows(1);
-    const headerRange = leadsSheet.getRange(1, 1, 1, BASE_HEADERS.length);
-    headerRange.setFontWeight('bold').setBackground('#6b4226').setFontColor('#ffffff');
-    leadsSheet.setColumnWidths(1, BASE_HEADERS.length, 150);
-    // Status column data validation (column 9)
-    const statusCol = BASE_HEADERS.indexOf('Status') + 1;
-    const rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUS_OPTIONS, true).build();
-    leadsSheet.getRange(2, statusCol, 2000, 1).setDataValidation(rule);
-    leadsSheet.getRange(1, 1, 1, BASE_HEADERS.length).createFilter();
-  }
-
-  let versionsSheet = ss.getSheetByName(VERSIONS_SHEET_NAME);
-  if (!versionsSheet) {
-    versionsSheet = ss.insertSheet(VERSIONS_SHEET_NAME);
-    versionsSheet.appendRow(['Timestamp', 'Label', 'ConfigJSON']);
-    versionsSheet.setFrozenRows(1);
-    versionsSheet.hideSheet();
-  }
-
-  if (!PropertiesService.getScriptProperties().getProperty(CONFIG_PROP_KEY)) {
-    const cfg = defaultConfig_();
-    cfg.settings.sheetId = ss.getId();
-    cfg.admin.passwordHash = hashPassword_('admin123'); // CHANGE THIS immediately after first login
-    cfg.admin.pinHash = hashPassword_('1234'); // Quick-access PIN for the mobile/GitHub-hosted launcher — CHANGE THIS too
-    PropertiesService.getScriptProperties().setProperty(CONFIG_PROP_KEY, JSON.stringify(cfg));
-  }
-}
-
-function defaultConfig_() {
-  return {
-    formTitle: 'Get in Touch with Kapoore Art',
-    formSubtitle: "Fill the form below and we'll get back to you shortly.",
-    layout: { columns: 1 },
-    theme: {
-      primaryColor: '#6b4226',
-      secondaryColor: '#c9a26d',
-      textColor: '#2b2b2b',
-      bgColor: '#faf6f0',
-      fontFamily: "'Poppins', sans-serif",
-      bgImage: '',
-      logo: '',
-      favicon: '',
-      buttonStyle: 'rounded', // rounded | square | pill
-      borderRadius: 10,
-      spacing: 16,
-      animations: true
-    },
-    fields: [
-      { id: 'name', label: 'Full Name', type: 'text', placeholder: 'Enter your name', required: true, visible: true, order: 1, colSpan: 1 },
-      { id: 'mobile', label: 'Mobile Number', type: 'mobile', placeholder: '10-digit mobile number', required: true, visible: true, order: 2, colSpan: 1 },
-      { id: 'email', label: 'Email Address', type: 'email', placeholder: 'you@example.com', required: false, visible: true, order: 3, colSpan: 1 },
-      { id: 'city', label: 'City', type: 'text', placeholder: 'Your city', required: false, visible: true, order: 4, colSpan: 1 },
-      { id: 'requirement', label: 'Requirement', type: 'dropdown', placeholder: '', options: ['Custom Portrait', 'Bulk Order', 'Framing', 'Other'], required: false, visible: true, order: 5, colSpan: 1 },
-      { id: 'message', label: 'Message', type: 'textarea', placeholder: 'Tell us more about your requirement...', required: false, visible: true, order: 6, colSpan: 1 }
-    ],
-    settings: {
-      emailRecipients: ['admin@example.com'],
-      pushoverUserKey: '',
-      pushoverApiToken: '',
-      sheetId: '',
-      successMessage: "Thank you! Your enquiry has been received. We'll contact you soon.",
-      errorMessage: 'Something went wrong. Please try again or call us directly.',
-      captchaEnabled: true,
-      fileUploadEnabled: false,
-      autoReplyEnabled: true,
-      duplicateCheckEnabled: true,
-      notificationsEnabled: true,
-      callNowEnabled: false,
-      callNowNumber: ''
-    },
-    socialLinks: [], // [{ platform:'whatsapp', url:'https://wa.me/91XXXXXXXXXX', label:'WhatsApp' }]
-    admin: { username: 'admin', passwordHash: '', pinHash: '' }
-  };
-}
-
-// ---------------------------------------------------------------------
-// CONFIG HELPERS
-// ---------------------------------------------------------------------
-function getConfig_() {
-  const raw = PropertiesService.getScriptProperties().getProperty(CONFIG_PROP_KEY);
-  const cfg = raw ? JSON.parse(raw) : defaultConfig_();
-  return migrateConfig_(cfg);
-}
-
-// Fills in any keys missing from an older saved config (safe upgrades, never overwrites existing values)
-function migrateConfig_(cfg) {
-  const def = defaultConfig_();
-  cfg.socialLinks = cfg.socialLinks || [];
-  cfg.settings = Object.assign({}, def.settings, cfg.settings || {});
-  cfg.admin = Object.assign({}, def.admin, cfg.admin || {});
-  if (!cfg.admin.pinHash) cfg.admin.pinHash = hashPassword_('1234');
-  return cfg;
-}
-
-function setConfig_(cfg) {
-  PropertiesService.getScriptProperties().setProperty(CONFIG_PROP_KEY, JSON.stringify(cfg));
-}
-
-// Config subset safe to expose publicly (no admin creds, no pushover tokens, no email list)
-function getPublicConfig_() {
-  const cfg = getConfig_();
-  return {
-    formTitle: cfg.formTitle,
-    formSubtitle: cfg.formSubtitle,
-    layout: cfg.layout,
-    theme: cfg.theme,
-    fields: cfg.fields,
-    settings: {
-      successMessage: cfg.settings.successMessage,
-      errorMessage: cfg.settings.errorMessage,
-      captchaEnabled: cfg.settings.captchaEnabled,
-      fileUploadEnabled: cfg.settings.fileUploadEnabled
-    }
-  };
-}
-
-// ---------------------------------------------------------------------
-// AUTH
-// ---------------------------------------------------------------------
-function hashPassword_(pwd) {
-  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, pwd, Utilities.Charset.UTF_8);
-  return digest.map(b => ('0' + (b & 0xFF).toString(16)).slice(-2)).join('');
-}
-
-function handleAdminLogin_(payload) {
-  const cfg = getConfig_();
-  const { username, password } = payload;
-  if (username !== cfg.admin.username || hashPassword_(password || '') !== cfg.admin.passwordHash) {
-    return { success: false, message: 'Invalid username or password.' };
-  }
-  const token = Utilities.getUuid();
-  const session = { username, expires: Date.now() + SESSION_TTL_MS };
-  CacheService.getScriptCache().put(SESSION_PROP_PREFIX + token, JSON.stringify(session), 21600); // 6h cache
-  return { success: true, token };
-}
-
-// Quick-access PIN login — used by the GitHub-hosted mobile launcher page.
-// Returns the same kind of session token as the full username/password login,
-// so the launcher can hand off straight into the admin panel iframe.
-function handleVerifyPin_(payload) {
-  const cfg = getConfig_();
-  const pin = (payload.pin || '').toString().trim();
-  if (!pin || hashPassword_(pin) !== cfg.admin.pinHash) {
-    return { success: false, message: 'Incorrect PIN.' };
-  }
-  const token = Utilities.getUuid();
-  const session = { username: cfg.admin.username, expires: Date.now() + SESSION_TTL_MS };
-  CacheService.getScriptCache().put(SESSION_PROP_PREFIX + token, JSON.stringify(session), 21600);
-  return { success: true, token };
-}
-
-function handleSetPin_(payload) {
-  const pin = (payload.pin || '').toString().trim();
-  if (!/^\d{4,6}$/.test(pin)) {
-    return { success: false, message: 'PIN must be 4-6 digits.' };
-  }
-  const cfg = getConfig_();
-  cfg.admin.pinHash = hashPassword_(pin);
-  setConfig_(cfg);
-  return { success: true, message: 'PIN updated.' };
-}
-
-function handleAdminLogout_(payload) {
-  if (payload.token) CacheService.getScriptCache().remove(SESSION_PROP_PREFIX + payload.token);
-  return { success: true };
-}
-
-function isValidSession_(token) {
-  if (!token) return false;
-  const raw = CacheService.getScriptCache().get(SESSION_PROP_PREFIX + token);
-  if (!raw) return false;
-  const session = JSON.parse(raw);
-  return session.expires > Date.now();
-}
-
-function requireAuth_(payload, fn) {
-  if (!isValidSession_(payload.token)) {
-    return { success: false, message: 'Session expired. Please log in again.', authError: true };
-  }
-  return fn();
-}
-
-function handleChangePassword_(payload) {
-  const cfg = getConfig_();
-  cfg.admin.passwordHash = hashPassword_(payload.newPassword);
-  if (payload.newUsername) cfg.admin.username = payload.newUsername;
-  setConfig_(cfg);
-  return { success: true, message: 'Credentials updated.' };
-}
-
-// ---------------------------------------------------------------------
-// LEAD SUBMISSION
-// ---------------------------------------------------------------------
-function handleSubmitLead_(payload) {
-  const cfg = getConfig_();
-  const data = payload.data || {};
-  const lock = LockService.getScriptLock();
-  lock.waitLock(15000);
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = ss.getSheetByName(LEADS_SHEET_NAME);
-
-    // ---- Server-side validation against configured fields ----
-    const errors = validateSubmission_(cfg.fields, data);
-    if (errors.length) {
-      return { success: false, message: errors.join(' ') };
-    }
-
-    const mobile = (data.mobile || '').toString().trim();
-
-    // ---- Duplicate check ----
-    if (cfg.settings.duplicateCheckEnabled && mobile) {
-      const lastRow = sheet.getLastRow();
-      if (lastRow > 1) {
-        const mobileColIdx = BASE_HEADERS.indexOf('Mobile') + 1;
-        const existingMobiles = sheet.getRange(2, mobileColIdx, lastRow - 1, 1).getValues().flat();
-        if (existingMobiles.some(m => m.toString().trim() === mobile)) {
-          return { success: false, message: 'This mobile number has already submitted an enquiry. Our team will contact you soon.' };
-        }
-      }
-    }
-
-    // ---- File upload (optional) ----
-    let fileUrl = '';
-    if (cfg.settings.fileUploadEnabled && data.file && data.file.base64) {
-      fileUrl = saveUploadedFile_(data.file);
-    }
-
-    // ---- Build row ----
-    const leadId = generateLeadId_(sheet);
-    const timestamp = new Date();
-    const knownIds = ['name', 'mobile', 'email', 'city', 'requirement', 'message'];
-    const extra = {};
-    Object.keys(data).forEach(k => {
-      if (!knownIds.includes(k) && k !== 'file' && k !== 'captcha') extra[k] = data[k];
-    });
-    if (fileUrl) extra.fileUrl = fileUrl;
-
-    const row = [
-      leadId,
-      timestamp,
-      data.name || '',
-      mobile,
-      data.email || '',
-      data.city || '',
-      data.requirement || '',
-      data.message || '',
-      'New',
-      'Website Form',
-      JSON.stringify(extra)
-    ];
-    sheet.appendRow(row);
-
-    // Re-apply status validation to the new row just in case
-    const statusCol = BASE_HEADERS.indexOf('Status') + 1;
-    const rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUS_OPTIONS, true).build();
-    sheet.getRange(sheet.getLastRow(), statusCol, 1, 1).setDataValidation(rule);
-
-    // ---- Notifications (best-effort, never block success on failure) ----
-    try { if (cfg.settings.notificationsEnabled) notifyAdminEmail_(cfg, leadId, data); } catch (e) {}
-    try { if (cfg.settings.notificationsEnabled) sendPushover_(cfg, leadId, data); } catch (e) {}
-    try { if (cfg.settings.autoReplyEnabled && data.email) sendAutoReply_(cfg, data); } catch (e) {}
-
-    return { success: true, message: cfg.settings.successMessage, leadId };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function validateSubmission_(fields, data) {
-  const errors = [];
-  fields.filter(f => f.visible).forEach(f => {
-    const val = (data[f.id] || '').toString().trim();
-    if (f.required && !val) {
-      errors.push(`"${f.label}" is required.`);
-      return;
-    }
-    if (!val) return;
-    if (f.type === 'email' && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
-      errors.push(`Please enter a valid email for "${f.label}".`);
-    }
-    if (f.type === 'mobile' && val && !/^[6-9]\d{9}$/.test(val.replace(/\D/g, ''))) {
-      errors.push(`Please enter a valid 10-digit mobile number for "${f.label}".`);
-    }
-  });
-  return errors;
-}
-
-function generateLeadId_(sheet) {
-  const datePart = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Kolkata', 'yyMMdd');
-  const seq = sheet.getLastRow(); // includes header, naturally increments
-  const seqPadded = ('000' + seq).slice(-4);
-  return `KA-${datePart}-${seqPadded}`;
-}
-
-function saveUploadedFile_(fileObj) {
-  try {
-    const folderName = 'Kapoore CRM Uploads';
-    const folders = DriveApp.getFoldersByName(folderName);
-    const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
-    const bytes = Utilities.base64Decode(fileObj.base64.split(',').pop());
-    const blob = Utilities.newBlob(bytes, fileObj.mimeType || 'application/octet-stream', fileObj.name || 'upload');
-    const file = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    return file.getUrl();
-  } catch (e) {
-    return '';
-  }
-}
-
-// ---------------------------------------------------------------------
-// NOTIFICATIONS
-// ---------------------------------------------------------------------
-function notifyAdminEmail_(cfg, leadId, data) {
-  const recipients = (cfg.settings.emailRecipients || []).filter(Boolean).join(',');
-  if (!recipients) return;
-  const subject = `New Lead: ${data.name || 'Unknown'} (${leadId})`;
-  const body = Object.keys(data)
-    .filter(k => k !== 'captcha' && k !== 'file')
-    .map(k => `${k}: ${data[k]}`)
-    .join('\n');
-  MailApp.sendEmail(recipients, subject, `New lead received on Kapoore Art website.\n\nLead ID: ${leadId}\n\n${body}`);
-}
-
-function sendAutoReply_(cfg, data) {
-  if (!data.email) return;
-  MailApp.sendEmail(data.email, 'We received your enquiry — Kapoore Art', `Hi ${data.name || ''},\n\nThank you for reaching out to Kapoore Art. We've received your enquiry and our team will contact you shortly.\n\nRegards,\nKapoore Art Team`);
-}
-
-function sendPushover_(cfg, leadId, data) {
-  const { pushoverUserKey, pushoverApiToken } = cfg.settings;
-  if (!pushoverUserKey || !pushoverApiToken) return;
-  UrlFetchApp.fetch('https://api.pushover.net/1/messages.json', {
-    method: 'post',
-    payload: {
-      token: pushoverApiToken,
-      user: pushoverUserKey,
-      title: `New Lead: ${data.name || 'Unknown'}`,
-      message: `Lead ID: ${leadId}\nMobile: ${data.mobile || '-'}\nCity: ${data.city || '-'}\nRequirement: ${data.requirement || '-'}`,
-      priority: 0
-    },
-    muteHttpExceptions: true
-  });
-}
-
-// ---------------------------------------------------------------------
-// CONFIG SAVE / VERSIONS / IMPORT / RESTORE
-// ---------------------------------------------------------------------
-function handleSaveConfig_(payload) {
-  const incoming = payload.config;
-  if (!incoming) return { success: false, message: 'No config provided.' };
-  const cfg = getConfig_();
-  // Preserve admin creds unless explicitly changed via changeAdminPassword action
-  incoming.admin = cfg.admin;
-  setConfig_(incoming);
-  saveVersionSnapshot_(incoming, payload.label || 'Manual save');
-  return { success: true, message: 'Settings saved and published.' };
-}
-
-function saveVersionSnapshot_(cfg, label) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(VERSIONS_SHEET_NAME);
-  sheet.appendRow([new Date(), label, JSON.stringify(cfg)]);
-  // Keep only latest 30 versions
-  const lastRow = sheet.getLastRow();
-  if (lastRow > 31) {
-    sheet.deleteRows(2, lastRow - 31);
-  }
-}
-
-function handleGetVersions_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(VERSIONS_SHEET_NAME);
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { success: true, versions: [] };
-  const rows = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
-  const versions = rows.map((r, i) => ({ rowIndex: i + 2, timestamp: r[0], label: r[1] })).reverse();
-  return { success: true, versions };
-}
-
-function handleRestoreVersion_(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(VERSIONS_SHEET_NAME);
-  const row = sheet.getRange(payload.rowIndex, 3).getValue();
-  const cfg = JSON.parse(row);
-  const current = getConfig_();
-  cfg.admin = current.admin;
-  setConfig_(cfg);
-  return { success: true, message: 'Version restored.', config: cfg };
-}
-
-function handleImportSettings_(payload) {
-  try {
-    const incoming = JSON.parse(payload.json);
-    const cfg = getConfig_();
-    incoming.admin = cfg.admin; // never import admin creds
-    setConfig_(incoming);
-    saveVersionSnapshot_(incoming, 'Imported settings');
-    return { success: true, message: 'Settings imported and published.', config: incoming };
-  } catch (e) {
-    return { success: false, message: 'Invalid JSON/HTML file: ' + e.message };
-  }
-}
-
-function handleRestoreDefault_() {
-  const current = getConfig_();
-  const cfg = defaultConfig_();
-  cfg.admin = current.admin;
-  cfg.settings.sheetId = current.settings.sheetId;
-  setConfig_(cfg);
-  saveVersionSnapshot_(cfg, 'Restored default template');
-  return { success: true, message: 'Default template restored.', config: cfg };
-}
-
-// ---------------------------------------------------------------------
-// LEADS MANAGEMENT (admin)
-// ---------------------------------------------------------------------
-function handleGetLeads_(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(LEADS_SHEET_NAME);
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return { success: true, leads: [] };
-  const values = sheet.getRange(2, 1, lastRow - 1, BASE_HEADERS.length).getValues();
-  let leads = values.map((r, i) => {
-    const obj = {};
-    BASE_HEADERS.forEach((h, idx) => obj[h] = r[idx]);
-    obj.rowIndex = i + 2;
-    obj.Timestamp = obj.Timestamp instanceof Date ? obj.Timestamp.toISOString() : obj.Timestamp;
-    try { obj.Extra = JSON.parse(obj.ExtraFieldsJSON || '{}'); } catch (e) { obj.Extra = {}; }
-    return obj;
-  });
-
-  const f = payload.filters || {};
-  if (f.status) leads = leads.filter(l => l.Status === f.status);
-  if (f.search) {
-    const s = f.search.toLowerCase();
-    leads = leads.filter(l => (l.Name + l.Mobile + l.Email + l.City).toLowerCase().includes(s));
-  }
-  leads.reverse(); // newest first
-  return { success: true, leads };
-}
-
-function handleUpdateLeadStatus_(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(LEADS_SHEET_NAME);
-  const statusCol = BASE_HEADERS.indexOf('Status') + 1;
-  sheet.getRange(payload.rowIndex, statusCol).setValue(payload.status);
-  return { success: true };
-}
-
-function handleDeleteLead_(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(LEADS_SHEET_NAME);
-  sheet.deleteRow(payload.rowIndex);
-  return { success: true };
-}
-
-function handleDashboardStats_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(LEADS_SHEET_NAME);
-  const lastRow = sheet.getLastRow();
-  const stats = { total: 0, today: 0, monthly: 0, pending: 0, byStatus: {} };
-  STATUS_OPTIONS.forEach(s => stats.byStatus[s] = 0);
-  if (lastRow < 2) return { success: true, stats };
-
-  const values = sheet.getRange(2, 1, lastRow - 1, BASE_HEADERS.length).getValues();
-  const tz = Session.getScriptTimeZone() || 'Asia/Kolkata';
-  const todayStr = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
-  const monthStr = Utilities.formatDate(new Date(), tz, 'yyyy-MM');
-  const tsCol = BASE_HEADERS.indexOf('Timestamp');
-  const statusCol = BASE_HEADERS.indexOf('Status');
-
-  values.forEach(r => {
-    stats.total++;
-    const ts = r[tsCol];
-    if (ts instanceof Date) {
-      const dStr = Utilities.formatDate(ts, tz, 'yyyy-MM-dd');
-      const mStr = Utilities.formatDate(ts, tz, 'yyyy-MM');
-      if (dStr === todayStr) stats.today++;
-      if (mStr === monthStr) stats.monthly++;
-    }
-    const status = r[statusCol] || 'New';
-    stats.byStatus[status] = (stats.byStatus[status] || 0) + 1;
-    if (['New', 'Contacted', 'Follow Up', 'Quotation Sent'].includes(status)) stats.pending++;
-  });
-
-  return { success: true, stats };
-}
-
-// ---------------------------------------------------------------------
-// EXPORT HTML (standalone form file)
-// ---------------------------------------------------------------------
-function handleExportHTML_() {
-  const cfg = getConfig_();
-  const html = buildFormHTML_(cfg, ScriptApp.getService().getUrl());
-  return { success: true, html };
-}
-
-/**
- * Builds the fully standalone, single-file HTML form.
- * Same function powers both the live doGet() form and the Admin "Export HTML" button,
- * guaranteeing exported files always match the live published form.
- */
-function buildFormHTML_(cfg, webAppUrl) {
-  const theme = cfg.theme;
-  const btnRadius = theme.buttonStyle === 'pill' ? '999px' : (theme.buttonStyle === 'square' ? '0px' : theme.borderRadius + 'px');
-  const fields = (cfg.fields || []).filter(f => f.visible).sort((a, b) => a.order - b.order);
-  const cols = cfg.layout && cfg.layout.columns ? cfg.layout.columns : 1;
-
-  const fieldHtml = fields.map(f => renderFieldHTML_(f)).join('\n');
-  const configJson = JSON.stringify(cfg).replace(/</g, '\\u003c');
-
-  return `<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHtml_(cfg.formTitle || 'Contact Us')}</title>
-${theme.favicon ? `<link rel="icon" href="${escapeHtml_(theme.favicon)}">` : ''}
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Kapoore Art CRM</title>
+
+<!-- PWA -->
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#6b4226">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="KA CRM">
+
 <style>
-  :root{
-    --primary: ${theme.primaryColor};
-    --secondary: ${theme.secondaryColor};
-    --text: ${theme.textColor || '#2b2b2b'};
-    --bg: ${theme.bgColor || '#faf6f0'};
-    --radius: ${theme.borderRadius}px;
-    --btn-radius: ${btnRadius};
-    --spacing: ${theme.spacing}px;
-  }
-  *{box-sizing:border-box;}
+  :root{ --primary:#6b4226; --secondary:#c9a26d; --bg:#f5f2ee; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; margin:0; }
   body{
-    margin:0; font-family:${theme.fontFamily}; background:var(--bg) ${theme.bgImage ? `url('${theme.bgImage}') center/cover no-repeat fixed` : ''};
-    color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+    font-family:'Segoe UI', Arial, sans-serif; background:linear-gradient(160deg, var(--bg), #efe6d8);
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
   }
-  .ka-card{
-    width:100%; max-width:${cols === 1 ? '520px' : cols === 2 ? '760px' : '980px'};
-    background:#fff; border-radius:calc(var(--radius) + 6px); box-shadow:0 10px 40px rgba(0,0,0,0.12);
-    padding:calc(var(--spacing) * 2); ${theme.animations ? 'animation: kaFadeUp .5s ease;' : ''}
+  #screenPin{ width:100%; max-width:360px; padding:24px; text-align:center; }
+  .logo{ width:76px; height:76px; border-radius:50%; margin:0 auto 14px; display:block; box-shadow:0 8px 24px rgba(0,0,0,.15); }
+  h1{ font-size:1.25rem; color:var(--primary); margin:0 0 4px; }
+  p.sub{ font-size:.85rem; color:#888; margin:0 0 24px; }
+  .dots{ display:flex; justify-content:center; gap:14px; margin-bottom:26px; }
+  .dot{ width:16px; height:16px; border-radius:50%; border:2px solid var(--primary); background:transparent; transition:background .15s; }
+  .dot.filled{ background:var(--primary); }
+  .keypad{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; max-width:280px; margin:0 auto; }
+  .key{
+    aspect-ratio:1; border-radius:50%; border:1px solid #e4ddd3; background:#fff; font-size:1.4rem; font-weight:600;
+    color:var(--primary); display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none;
+    box-shadow:0 3px 8px rgba(0,0,0,.06);
   }
-  @keyframes kaFadeUp{ from{opacity:0; transform:translateY(16px);} to{opacity:1; transform:translateY(0);} }
-  .ka-logo{ max-height:56px; margin-bottom:12px; }
-  .ka-title{ font-size:1.6rem; font-weight:700; color:var(--primary); margin:0 0 4px; }
-  .ka-subtitle{ font-size:0.95rem; color:#666; margin:0 0 20px; }
-  .ka-grid{ display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:var(--spacing); }
-  .ka-field{ display:flex; flex-direction:column; gap:6px; }
-  .ka-field.span2{ grid-column: span 2; }
-  .ka-field.span3{ grid-column: span 3; }
-  label{ font-size:0.85rem; font-weight:600; }
-  label .req{ color:#d33; }
-  input, select, textarea{
-    padding:11px 13px; border:1px solid #ddd; border-radius:var(--radius); font-size:0.95rem; font-family:inherit;
-    background:#fff; color:var(--text); transition:border-color .2s, box-shadow .2s; width:100%;
+  .key:active{ background:var(--primary); color:#fff; transform:scale(.96); }
+  .key.ghost{ background:transparent; box-shadow:none; border:none; }
+  .error-msg{ color:#c0392b; font-size:.82rem; height:18px; margin-bottom:10px; }
+  .spinner{ display:none; width:22px; height:22px; border:3px solid #eee; border-top-color:var(--primary); border-radius:50%; margin:8px auto; animation:spin .7s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  #screenSetup, #screenIframe{ display:none; }
+  #screenSetup{ width:100%; max-width:360px; padding:24px; text-align:center; }
+  #screenSetup input{ width:100%; padding:12px; border:1px solid #ddd; border-radius:8px; margin:12px 0; font-size:.9rem; }
+  #screenSetup button{ width:100%; padding:12px; background:var(--primary); color:#fff; border:none; border-radius:8px; font-weight:600; }
+
+  #screenIframe{ position:fixed; inset:0; width:100%; height:100%; }
+  #adminFrame{ width:100%; height:100%; border:none; }
+
+  #installBtn{
+    position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--primary); color:#fff;
+    border:none; padding:11px 20px; border-radius:30px; font-size:.85rem; font-weight:600; display:none;
+    box-shadow:0 6px 20px rgba(0,0,0,.2); z-index:50;
   }
-  input:focus, select:focus, textarea:focus{ outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(0,0,0,0.05); }
-  textarea{ min-height:90px; resize:vertical; }
-  .ka-radio-group, .ka-checkbox-group{ display:flex; flex-wrap:wrap; gap:10px; }
-  .ka-radio-group label, .ka-checkbox-group label{ font-weight:400; display:flex; align-items:center; gap:6px; }
-  .ka-btn{
-    margin-top:calc(var(--spacing));
-    background:var(--primary); color:#fff; border:none; padding:13px 20px; font-size:1rem; font-weight:600;
-    border-radius:var(--btn-radius); cursor:pointer; width:100%; transition:transform .15s, background .2s;
-  }
-  .ka-btn:hover{ background:var(--secondary); ${theme.animations ? 'transform:translateY(-2px);' : ''} }
-  .ka-btn:disabled{ opacity:0.6; cursor:not-allowed; transform:none; }
-  .ka-msg{ margin-top:14px; padding:12px 14px; border-radius:var(--radius); font-size:0.9rem; display:none; }
-  .ka-msg.success{ background:#e6f6ea; color:#1c7c3f; display:block; }
-  .ka-msg.error{ background:#fdeaea; color:#c0392b; display:block; }
-  .ka-captcha{ display:flex; align-items:center; gap:10px; font-size:0.9rem; }
-  .ka-call-btn{
-    display:flex; align-items:center; justify-content:center; gap:8px; margin-top:12px;
-    background:#1c7c3f; color:#fff; text-decoration:none; padding:13px 20px; font-weight:600;
-    border-radius:var(--btn-radius); font-size:1rem;
-  }
-  .ka-social{ display:flex; justify-content:center; gap:12px; margin-top:18px; }
-  .ka-social-btn{
-    width:42px; height:42px; border-radius:50%; background:#f2ece3; display:flex; align-items:center;
-    justify-content:center; text-decoration:none; font-size:1.2rem; transition:transform .15s;
-  }
-  .ka-social-btn:hover{ transform:translateY(-3px); }
-  .ka-footer{ text-align:center; margin-top:16px; font-size:0.75rem; color:#999; }
+  .ios-hint{ font-size:.75rem; color:#999; margin-top:16px; display:none; }
 </style>
 </head>
 <body>
-  <div class="ka-card">
-    ${theme.logo ? `<img class="ka-logo" src="${escapeHtml_(theme.logo)}" alt="logo">` : ''}
-    <h1 class="ka-title">${escapeHtml_(cfg.formTitle || '')}</h1>
-    <p class="ka-subtitle">${escapeHtml_(cfg.formSubtitle || '')}</p>
-    <form id="kaForm" novalidate>
-      <div class="ka-grid">
-        ${fieldHtml}
-        ${cfg.settings.fileUploadEnabled ? `<div class="ka-field"><label>Attach File</label><input type="file" id="f_file"></div>` : ''}
-        ${cfg.settings.captchaEnabled ? `<div class="ka-field ka-captcha" id="captchaWrap"></div>` : ''}
-      </div>
-      <button type="submit" class="ka-btn" id="submitBtn">Submit Enquiry</button>
-      <div class="ka-msg" id="kaMsg"></div>
-      ${cfg.settings.callNowEnabled && cfg.settings.callNowNumber ? `<a href="tel:${escapeHtml_(cfg.settings.callNowNumber)}" class="ka-call-btn" id="callNowBtn" style="display:none;">📞 Call Now</a>` : ''}
-    </form>
-    ${(cfg.socialLinks && cfg.socialLinks.length) ? `<div class="ka-social">${cfg.socialLinks.map(s => `<a href="${escapeHtml_(s.url)}" target="_blank" rel="noopener" class="ka-social-btn" title="${escapeHtml_(s.label || s.platform)}">${socialIcon_(s.platform)}</a>`).join('')}</div>` : ''}
-    <div class="ka-footer">Kapoore Art</div>
+
+<!-- ===== First-time Web App URL setup ===== -->
+<div id="screenSetup">
+  <img class="logo" src="./icon-192.png" alt="logo">
+  <h1>One-time Setup</h1>
+  <p class="sub">Apna Google Apps Script Web App URL paste karo (Apps Script deploy karne ke baad milta hai).</p>
+  <input type="text" id="setupUrl" placeholder="https://script.google.com/macros/s/.../exec">
+  <button onclick="saveWebAppUrl()">Save &amp; Continue</button>
+</div>
+
+<!-- ===== PIN screen ===== -->
+<div id="screenPin">
+  <img class="logo" src="./icon-192.png" alt="logo">
+  <h1>Kapoore Art CRM</h1>
+  <p class="sub">Enter your quick-access PIN</p>
+  <div class="error-msg" id="pinError"></div>
+  <div class="dots" id="pinDots">
+    <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
   </div>
+  <div class="spinner" id="pinSpinner"></div>
+  <div class="keypad" id="keypad">
+    <div class="key" onclick="press('1')">1</div><div class="key" onclick="press('2')">2</div><div class="key" onclick="press('3')">3</div>
+    <div class="key" onclick="press('4')">4</div><div class="key" onclick="press('5')">5</div><div class="key" onclick="press('6')">6</div>
+    <div class="key" onclick="press('7')">7</div><div class="key" onclick="press('8')">8</div><div class="key" onclick="press('9')">9</div>
+    <div class="key ghost" onclick="resetSetup()" style="font-size:.7rem;">Reset URL</div>
+    <div class="key" onclick="press('0')">0</div>
+    <div class="key" onclick="backspace()">⌫</div>
+  </div>
+  <p class="ios-hint" id="iosHint">Home screen pe install karne ke liye: Share button → "Add to Home Screen"</p>
+</div>
 
-  <script id="ka-config" type="application/json">${configJson}</script>
-  <script>
-    var WEB_APP_URL = "${webAppUrl}";
-    var CONFIG = JSON.parse(document.getElementById('ka-config').textContent);
-    var captchaAnswer = 0;
+<button id="installBtn" onclick="installApp()">⬇ Install App</button>
 
-    function setupCaptcha(){
-      var wrap = document.getElementById('captchaWrap');
-      if(!wrap) return;
-      var a = Math.floor(Math.random()*9)+1, b = Math.floor(Math.random()*9)+1;
-      captchaAnswer = a+b;
-      wrap.innerHTML = '<label style="min-width:auto;">What is '+a+' + '+b+'? <span class="req">*</span></label><input type="number" id="f_captcha" required style="max-width:100px;">';
+<!-- ===== Admin iframe (after PIN success) ===== -->
+<div id="screenIframe">
+  <iframe id="adminFrame"></iframe>
+</div>
+
+<script>
+  var pin = '';
+  var deferredInstallPrompt = null;
+
+  // ---------- Web App URL setup (stored locally on this device only) ----------
+  function getWebAppUrl(){ return localStorage.getItem('ka_webapp_url') || ''; }
+  function saveWebAppUrl(){
+    var url = document.getElementById('setupUrl').value.trim();
+    if(!url.startsWith('https://script.google.com/')){
+      alert('Valid Apps Script Web App URL daalo (script.google.com se shuru hona chahiye)');
+      return;
     }
-    setupCaptcha();
-
-    function showMsg(text, type){
-      var el = document.getElementById('kaMsg');
-      el.textContent = text;
-      el.className = 'ka-msg ' + type;
-    }
-
-    function readFileAsBase64(file){
-      return new Promise(function(resolve, reject){
-        var reader = new FileReader();
-        reader.onload = function(){ resolve(reader.result); };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    }
-
-    document.getElementById('kaForm').addEventListener('submit', function(e){
-      e.preventDefault();
-      var btn = document.getElementById('submitBtn');
-      var data = {};
-      CONFIG.fields.filter(function(f){return f.visible;}).forEach(function(f){
-        var el = document.getElementById('f_' + f.id);
-        if(!el) return;
-        if(f.type === 'checkbox'){
-          var boxes = document.querySelectorAll('input[name="f_'+f.id+'"]:checked');
-          data[f.id] = Array.prototype.map.call(boxes, function(b){return b.value;}).join(', ');
-        } else if(f.type === 'radio'){
-          var checked = document.querySelector('input[name="f_'+f.id+'"]:checked');
-          data[f.id] = checked ? checked.value : '';
-        } else {
-          data[f.id] = el.value;
-        }
-      });
-
-      if(CONFIG.settings.captchaEnabled){
-        var cVal = parseInt(document.getElementById('f_captcha').value, 10);
-        if(cVal !== captchaAnswer){
-          showMsg('Incorrect captcha answer. Please try again.', 'error');
-          setupCaptcha();
-          return;
-        }
-      }
-
-      btn.disabled = true; btn.textContent = 'Submitting...';
-
-      function doSubmit(fileData){
-        if(fileData) data.file = fileData;
-        fetch(WEB_APP_URL, {
-          method: 'POST',
-          body: JSON.stringify({ action: 'submitLead', data: data })
-        }).then(function(r){ return r.json(); }).then(function(res){
-          btn.disabled = false; btn.textContent = 'Submit Enquiry';
-          if(res.success){
-            showMsg(res.message || CONFIG.settings.successMessage, 'success');
-            document.getElementById('kaForm').reset();
-            setupCaptcha();
-            var callBtn = document.getElementById('callNowBtn');
-            if(callBtn) callBtn.style.display = 'flex';
-          } else {
-            showMsg(res.message || CONFIG.settings.errorMessage, 'error');
-          }
-        }).catch(function(){
-          btn.disabled = false; btn.textContent = 'Submit Enquiry';
-          showMsg(CONFIG.settings.errorMessage, 'error');
-        });
-      }
-
-      var fileInput = document.getElementById('f_file');
-      if(CONFIG.settings.fileUploadEnabled && fileInput && fileInput.files[0]){
-        readFileAsBase64(fileInput.files[0]).then(function(b64){
-          doSubmit({ name: fileInput.files[0].name, mimeType: fileInput.files[0].type, base64: b64 });
-        });
-      } else {
-        doSubmit(null);
-      }
-    });
-  </script>
-</body>
-</html>`;
-}
-
-function renderFieldHTML_(f) {
-  const req = f.required ? '<span class="req">*</span>' : '';
-  const spanClass = f.colSpan === 2 ? ' span2' : (f.colSpan === 3 ? ' span3' : '');
-  const reqAttr = f.required ? 'required' : '';
-  let control = '';
-
-  switch (f.type) {
-    case 'textarea':
-      control = `<textarea id="f_${f.id}" placeholder="${escapeHtml_(f.placeholder || '')}" ${reqAttr}></textarea>`;
-      break;
-    case 'dropdown':
-      control = `<select id="f_${f.id}" ${reqAttr}><option value="">Select...</option>${(f.options || []).map(o => `<option value="${escapeHtml_(o)}">${escapeHtml_(o)}</option>`).join('')}</select>`;
-      break;
-    case 'radio':
-      control = `<div class="ka-radio-group">${(f.options || []).map((o, i) => `<label><input type="radio" name="f_${f.id}" value="${escapeHtml_(o)}" ${i === 0 && f.required ? 'required' : ''}> ${escapeHtml_(o)}</label>`).join('')}</div>`;
-      break;
-    case 'checkbox':
-      control = `<div class="ka-checkbox-group">${(f.options || []).map(o => `<label><input type="checkbox" name="f_${f.id}" value="${escapeHtml_(o)}"> ${escapeHtml_(o)}</label>`).join('')}</div>`;
-      break;
-    case 'date':
-      control = `<input type="date" id="f_${f.id}" ${reqAttr}>`;
-      break;
-    case 'number':
-      control = `<input type="number" id="f_${f.id}" placeholder="${escapeHtml_(f.placeholder || '')}" ${reqAttr}>`;
-      break;
-    case 'mobile':
-      control = `<input type="tel" id="f_${f.id}" pattern="[0-9]{10}" maxlength="10" placeholder="${escapeHtml_(f.placeholder || '')}" ${reqAttr}>`;
-      break;
-    case 'email':
-      control = `<input type="email" id="f_${f.id}" placeholder="${escapeHtml_(f.placeholder || '')}" ${reqAttr}>`;
-      break;
-    default:
-      control = `<input type="text" id="f_${f.id}" placeholder="${escapeHtml_(f.placeholder || '')}" ${reqAttr}>`;
+    if(!url.endsWith('/exec')) url = url.replace(/\/$/, '') + (url.includes('/exec') ? '' : '/exec');
+    localStorage.setItem('ka_webapp_url', url);
+    showPinScreen();
+  }
+  function resetSetup(){
+    if(!confirm('Web App URL reset karke dobara setup karna hai?')) return;
+    localStorage.removeItem('ka_webapp_url');
+    location.reload();
   }
 
-  return `<div class="ka-field${spanClass}"><label>${escapeHtml_(f.label)} ${req}</label>${control}</div>`;
-}
+  function showPinScreen(){
+    document.getElementById('screenSetup').style.display = 'none';
+    document.getElementById('screenPin').style.display = 'block';
+  }
 
-// ---------------------------------------------------------------------
-// google.script.run WRAPPERS (used directly by Admin.html — avoids
-// fetch/CORS entirely since Admin.html runs inside the Apps Script iframe)
-// ---------------------------------------------------------------------
-function apiLogin(username, password) {
-  return handleAdminLogin_({ username: username, password: password });
-}
-function apiLogout(token) {
-  return handleAdminLogout_({ token: token });
-}
-function apiGetConfig(token) {
-  return requireAuth_({ token: token }, () => ({ success: true, config: getConfig_() }));
-}
-function apiSaveConfig(token, config, label) {
-  return requireAuth_({ token: token }, () => handleSaveConfig_({ config: config, label: label }));
-}
-function apiGetLeads(token, filters) {
-  return requireAuth_({ token: token }, () => handleGetLeads_({ filters: filters }));
-}
-function apiUpdateLeadStatus(token, rowIndex, status) {
-  return requireAuth_({ token: token }, () => handleUpdateLeadStatus_({ rowIndex: rowIndex, status: status }));
-}
-function apiDeleteLead(token, rowIndex) {
-  return requireAuth_({ token: token }, () => handleDeleteLead_({ rowIndex: rowIndex }));
-}
-function apiDashboardStats(token) {
-  return requireAuth_({ token: token }, () => handleDashboardStats_());
-}
-function apiExportHTML(token) {
-  return requireAuth_({ token: token }, () => handleExportHTML_());
-}
-function apiExportSettings(token) {
-  return requireAuth_({ token: token }, () => ({ success: true, json: JSON.stringify(getConfig_(), null, 2) }));
-}
-function apiImportSettings(token, json) {
-  return requireAuth_({ token: token }, () => handleImportSettings_({ json: json }));
-}
-function apiRestoreDefault(token) {
-  return requireAuth_({ token: token }, () => handleRestoreDefault_());
-}
-function apiGetVersions(token) {
-  return requireAuth_({ token: token }, () => handleGetVersions_());
-}
-function apiRestoreVersion(token, rowIndex) {
-  return requireAuth_({ token: token }, () => handleRestoreVersion_({ rowIndex: rowIndex }));
-}
-function apiChangePassword(token, newUsername, newPassword) {
-  return requireAuth_({ token: token }, () => handleChangePassword_({ newUsername: newUsername, newPassword: newPassword }));
-}
-function apiSetPin(token, pin) {
-  return requireAuth_({ token: token }, () => handleSetPin_({ pin: pin }));
-}
-function apiValidateSession(token) {
-  return { success: isValidSession_(token) };
-}
+  (function init(){
+    if(!getWebAppUrl()){
+      document.getElementById('screenSetup').style.display = 'block';
+    } else {
+      showPinScreen();
+    }
+    // iOS doesn't support beforeinstallprompt — show a manual hint instead
+    var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if(isIOS) document.getElementById('iosHint').style.display = 'block';
+  })();
 
-function socialIcon_(platform) {
-  const icons = {
-    whatsapp: '💬', instagram: '📷', facebook: '📘', youtube: '▶️',
-    linkedin: '💼', twitter: '🐦', website: '🌐', telegram: '✈️', email: '✉️', phone: '📞'
-  };
-  return icons[(platform || '').toLowerCase()] || '🔗';
-}
+  // ---------- PIN pad ----------
+  function updateDots(){
+    var dots = document.querySelectorAll('.dot');
+    dots.forEach(function(d, i){ d.classList.toggle('filled', i < pin.length); });
+  }
+  function press(d){
+    if(pin.length >= 6) return;
+    pin += d;
+    updateDots();
+    if(pin.length >= 4){
+      // small debounce so user can enter 5/6-digit pins too
+      clearTimeout(window._pinTimer);
+      window._pinTimer = setTimeout(function(){ if(pin.length >= 4) verifyPin(); }, 350);
+    }
+  }
+  function backspace(){
+    pin = pin.slice(0, -1);
+    updateDots();
+    document.getElementById('pinError').textContent = '';
+  }
 
-function escapeHtml_(str) {
-  return (str || '').toString()
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
+  function verifyPin(){
+    document.getElementById('pinSpinner').style.display = 'block';
+    document.getElementById('keypad').style.opacity = '0.5';
+    fetch(getWebAppUrl(), {
+      method: 'POST',
+      body: JSON.stringify({ action: 'verifyPin', pin: pin })
+    }).then(function(r){ return r.json(); }).then(function(res){
+      document.getElementById('pinSpinner').style.display = 'none';
+      document.getElementById('keypad').style.opacity = '1';
+      if(res.success){
+        loadAdmin(res.token);
+      } else {
+        document.getElementById('pinError').textContent = res.message || 'Incorrect PIN';
+        pin = ''; updateDots();
+      }
+    }).catch(function(){
+      document.getElementById('pinSpinner').style.display = 'none';
+      document.getElementById('keypad').style.opacity = '1';
+      document.getElementById('pinError').textContent = 'Connection error. Check your internet.';
+      pin = ''; updateDots();
+    });
+  }
+
+  function loadAdmin(token){
+    document.getElementById('screenPin').style.display = 'none';
+    document.getElementById('installBtn').style.display = 'none';
+    document.getElementById('screenIframe').style.display = 'block';
+    document.getElementById('adminFrame').src = getWebAppUrl() + '?page=admin&token=' + encodeURIComponent(token);
+  }
+
+  // ---------- PWA install ----------
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    document.getElementById('installBtn').style.display = 'block';
+  });
+  function installApp(){
+    if(!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    deferredInstallPrompt.userChoice.then(function(){
+      deferredInstallPrompt = null;
+      document.getElementById('installBtn').style.display = 'none';
+    });
+  }
+
+  // ---------- Service worker ----------
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('./sw.js').catch(function(){});
+    });
+  }
+</script>
+</body>
+</html>
