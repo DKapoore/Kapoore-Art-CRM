@@ -1,0 +1,92 @@
+{
+  "id": "contact-us",
+  "name": "Contact Us Form",
+  "title": "Get in Touch with Kapoore Art",
+  "subtitle": "Fill the form below and we'll get back to you shortly.",
+  "successMessage": "Thank you! Your enquiry has been received. We'll contact you soon.",
+  "errorMessage": "Something went wrong. Please try again or call us directly.",
+  "captcha": true,
+  "buttonText": "Submit Enquiry",
+  "theme": {
+    "logo": "https://i.ibb.co/bgWwFzxJ/Kapoore-Art-Logo.jpg",
+    "favicon": "https://i.ibb.co/1fmfTKHd/Kapoore-Art-Logo.png",
+    "primaryColor": "#6b4226",
+    "secondaryColor": "#c9a26d",
+    "textColor": "#2b2b2b",
+    "bgColor": "#b30000",
+    "borderRadius": 13,
+    "spacing": 14,
+    "fontFamily": "'Poppins', sans-serif"
+  },
+  "fields": [
+    {
+      "id": "name",
+      "order": 1,
+      "type": "text",
+      "label": "Full Name",
+      "required": true,
+      "placeholder": "Enter your name"
+    },
+    {
+      "id": "mobile",
+      "order": 2,
+      "type": "mobile",
+      "label": "Mobile Number",
+      "required": true,
+      "placeholder": "10-digit mobile number"
+    },
+    {
+      "id": "email",
+      "order": 3,
+      "type": "email",
+      "label": "Email Address",
+      "required": false,
+      "placeholder": "you@example.com"
+    },
+    {
+      "id": "city",
+      "order": 4,
+      "type": "text",
+      "label": "City",
+      "required": false,
+      "placeholder": "Your city"
+    },
+    {
+      "id": "requirement",
+      "order": 5,
+      "type": "dropdown",
+      "label": "Requirement",
+      "required": false,
+      "options": [
+        "Graphic Designing",
+        "Vinyl Car Wrapping",
+        "Website Designing",
+        "Video Editing",
+        "Logo Design",
+        "Visiting Card Design & Printing",
+        "Sticker Design & Printing",
+        "Leaflet Design & Printing",
+        "Pamphlet Design & Printing",
+        "Flex Banner Printing",
+        "Sign Board Designing",
+        "Product Label Design",
+        "Packaging Design",
+        "Brochure Design",
+        "Social Media Post Design",
+        "Wedding Card Design",
+        "ID Card Design",
+        "Menu Card Design",
+        "Bill Book & Letterhead Design",
+        "Digital Marketing Creatives."
+      ]
+    },
+    {
+      "id": "message",
+      "order": 6,
+      "type": "textarea",
+      "label": "Message",
+      "required": false,
+      "placeholder": "Tell us more about your requirement..."
+    }
+  ]
+}

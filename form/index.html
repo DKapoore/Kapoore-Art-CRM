@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loading…</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --primary:#6b4226; --secondary:#c9a26d; --text:#2b2b2b; --bg:#b30000; --radius:13px; --btn-radius:13px; --spacing:14px; }
+  *{box-sizing:border-box;}
+  body{ margin:0; font-family:'Poppins',sans-serif; background:var(--bg); color:var(--text); min-height:100vh;
+    display:flex; align-items:center; justify-content:center; padding:24px; }
+  .ka-card{ width:100%; max-width:520px; background:#fff; border-radius:calc(var(--radius) + 6px);
+    box-shadow:0 10px 40px rgba(0,0,0,.12); padding:calc(var(--spacing) * 2); animation:kaFadeUp .5s ease; }
+  @keyframes kaFadeUp{ from{opacity:0;transform:translateY(16px);} to{opacity:1;transform:translateY(0);} }
+  .ka-logo{ max-height:56px; margin-bottom:12px; }
+  .ka-title{ font-size:1.6rem; font-weight:700; color:var(--primary); margin:0 0 4px; }
+  .ka-subtitle{ font-size:.95rem; color:#666; margin:0 0 20px; }
+  .ka-grid{ display:grid; gap:var(--spacing); }
+  .ka-field{ display:flex; flex-direction:column; gap:6px; }
+  label{ font-size:.85rem; font-weight:600; }
+  label .req{ color:#d33; }
+  input, select, textarea{ padding:11px 13px; border:1px solid #ddd; border-radius:var(--radius); font-size:.95rem;
+    font-family:inherit; background:#fff; color:var(--text); width:100%; transition:border-color .2s, box-shadow .2s; }
+  input:focus, select:focus, textarea:focus{ outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(0,0,0,.05); }
+  textarea{ min-height:90px; resize:vertical; }
+  .ka-group{ display:flex; flex-wrap:wrap; gap:10px; }
+  .ka-group label{ font-weight:400; display:flex; align-items:center; gap:6px; }
+  .ka-group input{ width:auto; }
+  .ka-btn{ margin-top:var(--spacing); background:var(--primary); color:#fff; border:none; padding:13px 20px; font-size:1rem;
+    font-weight:600; border-radius:var(--btn-radius); cursor:pointer; width:100%; transition:transform .15s, background .2s; font-family:inherit; }
+  .ka-btn:hover{ background:var(--secondary); transform:translateY(-2px); }
+  .ka-btn:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
+  .ka-msg{ margin-top:14px; padding:12px 14px; border-radius:var(--radius); font-size:.9rem; display:none; }
+  .ka-msg.success{ background:#e6f6ea; color:#1c7c3f; display:block; }
+  .ka-msg.error{ background:#fdeaea; color:#c0392b; display:block; }
+  .ka-captcha{ display:flex; flex-direction:row; align-items:center; gap:10px; font-size:.9rem; }
+  .ka-captcha input{ max-width:100px; }
+  .ka-hp{ position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; }
+  .ka-footer{ text-align:center; margin-top:16px; font-size:.75rem; color:#999; }
+  .ka-state{ text-align:center; color:#666; }
+</style>
+</head>
+<body>
+<div class="ka-card" id="card"><p class="ka-state">Loading form…</p></div>
+
+<script>
+(function(){
+  // Default Apps Script Web App URL (kisi form ki JSON mein "webAppUrl" daalke override bhi kar sakte ho)
+  var DEFAULT_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyiqT-lgiC3Xqx14-g7CtpX-9O0xk4e6u58X0UZedwAOW5_JLrWcP3Kiyx8KuAAmt9t0w/exec";
+
+  var qs   = new URLSearchParams(location.search);
+  var slug = String(window.FORM_ID || qs.get('f') || '').toLowerCase();
+  var card = document.getElementById('card');
+  var cfg, captchaAnswer = 0;
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function showError(t){ card.innerHTML = '<p class="ka-state">' + esc(t) + '</p>'; }
+
+  if(!/^[a-z0-9-]{1,40}$/.test(slug)){ showError('Form link sahi nahi hai. (?f=form-name missing)'); return; }
+
+  fetch('../forms/' + slug + '.json', { cache: 'no-store' })
+    .then(function(r){ if(!r.ok) throw new Error('nf'); return r.json(); })
+    .then(function(c){ cfg = c; render(); })
+    .catch(function(){ showError('Ye form nahi mila ya band hai.'); });
+
+  function applyTheme(t){
+    t = t || {};
+    var r = document.documentElement.style;
+    if(t.primaryColor)   r.setProperty('--primary', t.primaryColor);
+    if(t.secondaryColor) r.setProperty('--secondary', t.secondaryColor);
+    if(t.textColor)      r.setProperty('--text', t.textColor);
+    if(t.bgColor)        r.setProperty('--bg', t.bgColor);
+    if(t.borderRadius != null){ r.setProperty('--radius', t.borderRadius + 'px'); r.setProperty('--btn-radius', t.borderRadius + 'px'); }
+    if(t.buttonStyle === 'pill') r.setProperty('--btn-radius', '999px'); else if(t.buttonStyle === 'square') r.setProperty('--btn-radius', '0px');
+    if(t.spacing != null) r.setProperty('--spacing', t.spacing + 'px');
+    if(t.fontFamily) document.body.style.fontFamily = t.fontFamily;
+    if(t.bgImage) document.body.style.background = 'var(--bg) url("' + String(t.bgImage).replace(/"/g, '') + '") center/cover fixed';
+    if(t.favicon){ var l = document.createElement('link'); l.rel = 'icon'; l.href = t.favicon; document.head.appendChild(l); }
+  }
+
+  function fieldHtml(f){
+    var id = 'f_' + f.id, t = f.type || 'text';
+    var lab = '<label' + ((t === 'radio' || t === 'checkbox') ? '' : ' for="' + id + '"') + '>' + esc(f.label) +
+              (f.required ? ' <span class="req">*</span>' : '') + '</label>';
+    var ph = f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '';
+    var h;
+    if(t === 'textarea'){
+      h = '<textarea id="' + id + '"' + ph + '></textarea>';
+    } else if(t === 'dropdown'){
+      h = '<select id="' + id + '"><option value="">Select...</option>' +
+          (f.options || []).map(function(o){ return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('') + '</select>';
+    } else if(t === 'radio' || t === 'checkbox'){
+      h = '<div class="ka-group">' + (f.options || []).map(function(o){
+        return '<label><input type="' + t + '" name="' + id + '" value="' + esc(o) + '"> ' + esc(o) + '</label>';
+      }).join('') + '</div>';
+    } else {
+      var type = { mobile:'tel', email:'email', number:'number', date:'date' }[t] || 'text';
+      var extra = t === 'mobile' ? ' inputmode="numeric" maxlength="10"' : '';
+      h = '<input type="' + type + '" id="' + id + '"' + ph + extra + '>';
+    }
+    return '<div class="ka-field">' + lab + h + '</div>';
+  }
+
+  function setupCaptcha(){
+    var w = document.getElementById('captchaWrap'); if(!w) return;
+    var a = Math.floor(Math.random() * 9) + 1, b = Math.floor(Math.random() * 9) + 1;
+    captchaAnswer = a + b;
+    w.innerHTML = '<label for="f_captcha">What is ' + a + ' + ' + b + '? <span class="req">*</span></label>' +
+                  '<input type="number" id="f_captcha">';
+  }
+
+  function render(){
+    applyTheme(cfg.theme);
+    document.title = cfg.title || cfg.name || 'Form';
+    var fields = (cfg.fields || []).slice().sort(function(a, b){ return (a.order || 0) - (b.order || 0); });
+    card.innerHTML =
+      (cfg.theme && cfg.theme.logo ? '<img class="ka-logo" src="' + esc(cfg.theme.logo) + '" alt="logo">' : '') +
+      '<h1 class="ka-title">' + esc(cfg.title || cfg.name) + '</h1>' +
+      (cfg.subtitle ? '<p class="ka-subtitle">' + esc(cfg.subtitle) + '</p>' : '') +
+      '<form id="kaForm" novalidate><div class="ka-grid">' +
+        fields.map(fieldHtml).join('') +
+        '<div class="ka-hp" aria-hidden="true"><input type="text" id="f_website" tabindex="-1" autocomplete="off"></div>' +
+        (cfg.captcha !== false ? '<div class="ka-field ka-captcha" id="captchaWrap"></div>' : '') +
+      '</div><button type="submit" class="ka-btn" id="submitBtn">' + esc(cfg.buttonText || 'Submit Enquiry') + '</button>' +
+      '<div class="ka-msg" id="kaMsg"></div></form>' +
+      '<div class="ka-footer">' + esc(cfg.footer || 'Kapoore Art') + '</div>';
+    if(cfg.captcha !== false) setupCaptcha();
+    document.getElementById('kaForm').addEventListener('submit', onSubmit);
+  }
+
+  function showMsg(t, type){ var el = document.getElementById('kaMsg'); el.textContent = t; el.className = 'ka-msg ' + type; }
+
+  function collect(){
+    var data = {}, bad = '';
+    (cfg.fields || []).forEach(function(f){
+      var id = 'f_' + f.id, t = f.type || 'text', v = '';
+      if(t === 'checkbox'){
+        v = Array.prototype.map.call(document.querySelectorAll('input[name="' + id + '"]:checked'), function(b){ return b.value; }).join(', ');
+      } else if(t === 'radio'){
+        var c = document.querySelector('input[name="' + id + '"]:checked'); v = c ? c.value : '';
+      } else {
+        var el = document.getElementById(id); v = el ? el.value.trim() : '';
+      }
+      if(t === 'mobile') v = v.replace(/\D/g, '');
+      if(!bad){
+        if(f.required && !v) bad = f.label + ' zaroori hai.';
+        else if(t === 'mobile' && v && !/^[6-9]\d{9}$/.test(v)) bad = 'Valid 10-digit mobile number daalo.';
+        else if(t === 'email' && v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) bad = 'Valid email daalo.';
+      }
+      data[f.id] = v;
+    });
+    return { data: data, error: bad };
+  }
+
+  function onSubmit(e){
+    e.preventDefault();
+    var btn = document.getElementById('submitBtn'), label = btn.textContent;
+    var r = collect();
+    if(r.error){ showMsg(r.error, 'error'); return; }
+    if(cfg.captcha !== false && parseInt(document.getElementById('f_captcha').value, 10) !== captchaAnswer){
+      showMsg('Incorrect captcha answer. Please try again.', 'error'); setupCaptcha(); return;
+    }
+    var d = r.data;
+    d.website     = document.getElementById('f_website').value;   // honeypot
+    d.form_id     = slug;
+    d.source_form = cfg.name || slug;                             // sheet ke "Source Form" column mein jaayega
+    d.source_url  = location.href.split('#')[0];
+    d.referrer    = document.referrer || '';
+    ['utm_source', 'utm_medium', 'utm_campaign'].forEach(function(k){ d[k] = qs.get(k) || ''; });
+
+    btn.disabled = true; btn.textContent = 'Submitting...';
+    fetch(cfg.webAppUrl || DEFAULT_WEB_APP_URL, { method: 'POST', body: JSON.stringify({ action: 'submitLead', data: d }) })
+      .then(function(x){ return x.json(); })
+      .then(function(res){
+        btn.disabled = false; btn.textContent = label;
+        if(res.success){
+          showMsg(res.message || cfg.successMessage || 'Thank you! We will contact you soon.', 'success');
+          document.getElementById('kaForm').reset();
+          if(cfg.captcha !== false) setupCaptcha();
+        } else {
+          showMsg(res.message || cfg.errorMessage || 'Something went wrong. Please try again.', 'error');
+        }
+      })
+      .catch(function(){
+        btn.disabled = false; btn.textContent = label;
+        showMsg(cfg.errorMessage || 'Something went wrong. Please try again.', 'error');
+      });
+  }
+})();
+</script>
+</body>
+</html>
